@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include "params.h"
 #include "kem.h"
 #include "indcpa.h"
@@ -58,19 +59,20 @@ int crypto_kem_enc(uint8_t *ct,
 
   randombytes(buf, KYBER_SYMBYTES);
   /* Don't release system RNG output */
-  hash_h(buf, buf, KYBER_SYMBYTES);
+  //hash_h(buf, buf, KYBER_SYMBYTES);
 
   /* Multitarget countermeasure for coins + contributory KEM */
-  hash_h(buf+KYBER_SYMBYTES, pk, KYBER_PUBLICKEYBYTES);
-  hash_g(kr, buf, 2*KYBER_SYMBYTES);
+  hash_h(buf+KYBER_SYMBYTES, pk, KYBER_PUBLICKEYBYTES); // m||H(pk)
+  hash_g(kr, buf, 2*KYBER_SYMBYTES); // (K,r)
 
   /* coins are in kr+KYBER_SYMBYTES */
   indcpa_enc(ct, buf, pk, kr+KYBER_SYMBYTES);
 
   /* overwrite coins in kr with H(c) */
-  hash_h(kr+KYBER_SYMBYTES, ct, KYBER_CIPHERTEXTBYTES);
+  //hash_h(kr+KYBER_SYMBYTES, ct, KYBER_CIPHERTEXTBYTES);
   /* hash concatenation of pre-k and H(c) to k */
-  kdf(ss, kr, 2*KYBER_SYMBYTES);
+  //kdf(ss, kr, 2*KYBER_SYMBYTES);
+  memcpy(ss, kr, KYBER_SSBYTES);
   return 0;
 }
 
@@ -95,7 +97,6 @@ int crypto_kem_dec(uint8_t *ss,
                    const uint8_t *ct,
                    const uint8_t *sk)
 {
-  size_t i;
   int fail;
   uint8_t buf[2*KYBER_SYMBYTES];
   /* Will contain key, coins */
@@ -106,8 +107,11 @@ int crypto_kem_dec(uint8_t *ss,
   indcpa_dec(buf, ct, sk);
 
   /* Multitarget countermeasure for coins + contributory KEM */
+  /*
   for(i=0;i<KYBER_SYMBYTES;i++)
     buf[KYBER_SYMBYTES+i] = sk[KYBER_SECRETKEYBYTES-2*KYBER_SYMBYTES+i];
+  */
+  memcpy(buf+KYBER_SYMBYTES, sk+KYBER_SECRETKEYBYTES-2*KYBER_SYMBYTES, KYBER_SYMBYTES);
   hash_g(kr, buf, 2*KYBER_SYMBYTES);
 
   /* coins are in kr+KYBER_SYMBYTES */
@@ -115,13 +119,16 @@ int crypto_kem_dec(uint8_t *ss,
 
   fail = verify(ct, cmp, KYBER_CIPHERTEXTBYTES);
 
-  /* overwrite coins in kr with H(c) */
+/*
   hash_h(kr+KYBER_SYMBYTES, ct, KYBER_CIPHERTEXTBYTES);
-
-  /* Overwrite pre-k with z on re-encryption failure */
   cmov(kr, sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES, KYBER_SYMBYTES, fail);
-
-  /* hash concatenation of pre-k and H(c) to k */
   kdf(ss, kr, 2*KYBER_SYMBYTES);
+*/
+  /* Compute rejection key */
+  rkprf(ss,sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES,ct);
+
+  /* Copy true key to return buffer if fail is false */
+  cmov(ss,kr,KYBER_SYMBYTES,!fail);
+
   return 0;
 }
